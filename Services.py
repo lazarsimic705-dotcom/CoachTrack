@@ -97,14 +97,18 @@ def update_player(player_id, name, position="", note=""):
     cursor.close()
     conn.close()
 
-
 def delete_player(player_id):
+    photo = get_player_photo(player_id)
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM players WHERE id = %s", (player_id,))
     conn.commit()
     cursor.close()
     conn.close()
+    if photo:
+        path = os.path.join(PHOTOS_DIR, photo)
+        if os.path.isfile(path):
+            os.remove(path)
 
 def list_trainings(team_id):
     """Treninzi tima, najnoviji prvi: [(id, naziv, datum, trajanje, plan), ...]"""
@@ -348,3 +352,119 @@ def attendance_stats(team_id):
         percent = round(came / total * 100) if total else None
         result.append((player_id, name, total, came, percent))
     return result
+
+# ----- SLIKA IGRACA ------
+
+def get_match_stats(training_id):
+    """Svi igrači tima tog događaja: [(id igrača, ime, golovi, asistencije), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT p.id, p.name, COALESCE(m.goals, 0), COALESCE(m.assists, 0) "
+        "FROM trainings t "
+        "JOIN players p ON p.team_id = t.team_id "
+        "LEFT JOIN match_stats m ON m.training_id = t.id AND m.player_id = p.id "
+        "WHERE t.id = %s ORDER BY p.name",
+        (training_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def save_match_stats(training_id, values):
+    """values je rečnik {id igrača: (golovi, asistencije)}."""
+    for goals, assists in values.values():
+        if goals < 0 or assists < 0:
+            raise ValueError("Golovi i asistencije ne mogu biti negativni.")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    # samo igrači iz tima tog treninga
+    cursor.execute(
+        "SELECT p.id FROM players p JOIN trainings t ON t.team_id = p.team_id WHERE t.id = %s",
+        (training_id,),
+    )
+    team_player_ids = {row[0] for row in cursor.fetchall()}
+
+    data = [
+        (training_id, pid, goals, assists)
+        for pid, (goals, assists) in values.items()
+        if pid in team_player_ids
+    ]
+    cursor.executemany(
+        "INSERT INTO match_stats (training_id, player_id, goals, assists) "
+        "VALUES (%s, %s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE goals = VALUES(goals), assists = VALUES(assists)",
+        data,
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def goal_totals(team_id):
+    """Ukupni golovi i asistencije po igraču: {id igrača: (golovi, asistencije)}"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT m.player_id, SUM(m.goals), SUM(m.assists) "
+        "FROM match_stats m JOIN players p ON p.id = m.player_id "
+        "WHERE p.team_id = %s GROUP BY m.player_id",
+        (team_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return {pid: (int(goals), int(assists)) for pid, goals, assists in rows}
+
+
+def get_player_photo(player_id):
+    """Vraća ime fajla slike igrača ili None."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT photo_file FROM players WHERE id = %s", (player_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row[0] if row else None
+
+
+def set_player_photo(player_id, source_path):
+    """Kopira sliku u folder 'slike' i vezuje je za igrača. Staru sliku briše."""
+    ext = os.path.splitext(source_path)[1].lower()
+    if ext not in ALLOWED_EXT:
+        raise ValueError("Dozvoljene su samo slike: png, jpg, jpeg, gif.")
+    if not os.path.isfile(source_path):
+        raise ValueError("Fajl ne postoji.")
+
+    old_file = get_player_photo(player_id)
+
+    file_name = f"{uuid.uuid4().hex}{ext}"
+    dest = os.path.join(PHOTOS_DIR, file_name)
+    shutil.copy2(source_path, dest)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE players SET photo_file = %s WHERE id = %s", (file_name, player_id)
+        )
+        if cursor.rowcount == 0:
+            raise ValueError("Igrač ne postoji.")
+        conn.commit()
+    except Exception:
+        if os.path.isfile(dest):
+            os.remove(dest)
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+    # tek kad je novo sačuvano, ukloni staru sliku
+    if old_file:
+        old_path = os.path.join(PHOTOS_DIR, old_file)
+        if os.path.isfile(old_path):
+            os.remove(old_path)
+
+

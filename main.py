@@ -10,7 +10,8 @@ from Services import (
     list_players, add_player, update_player, delete_player,
     list_trainings, create_training, delete_training, list_trainings, create_training, delete_training,
     get_attendance, save_attendance,  add_photo, list_photos, delete_photo,
-    PHOTOS_DIR, upcoming_trainings,  attendance_stats,
+    PHOTOS_DIR, upcoming_trainings,  attendance_stats, get_match_stats, save_match_stats,
+    goal_totals, get_player_photo, set_player_photo,
 )
 
 
@@ -87,16 +88,57 @@ def remove_team():
 
 
 # ---------- igrači ----------
+player_preview_image = None   # mora ostati sačuvana, inače slika nestane
+
 
 def refresh_players():
     players_tree.delete(*players_tree.get_children())
     team_id = current_team_id()
-    if team_id is None:
-        return
-    for player_id, name, position, note in list_players(team_id):
-        players_tree.insert("", "end", iid=str(player_id),
-                            values=(name, position or "", note or ""))
+    if team_id is not None:
+        for player_id, name, position, note in list_players(team_id):
+            players_tree.insert("", "end", iid=str(player_id),
+                                values=(name, position or "", note or ""))
+    show_player_preview()
 
+
+def show_player_preview(event=None):
+    global player_preview_image
+    player_id = selected_player_id()
+    if player_id is None:
+        player_preview_image = None
+        player_preview_label.config(image="", text="Izaberi igrača")
+        return
+    file_name = get_player_photo(player_id)
+    if not file_name:
+        player_preview_image = None
+        player_preview_label.config(image="", text="Nema slike")
+        return
+    try:
+        img = ImageOps.exif_transpose(Image.open(os.path.join(PHOTOS_DIR, file_name)))
+        img.thumbnail((200, 200))
+        player_preview_image = ImageTk.PhotoImage(img)
+        player_preview_label.config(image=player_preview_image, text="")
+    except OSError:
+        player_preview_image = None
+        player_preview_label.config(image="", text="Slika se ne može otvoriti.")
+
+
+def choose_player_photo():
+    player_id = selected_player_id()
+    if player_id is None:
+        messagebox.showinfo("CoachTrack", "Izaberi igrača iz liste.")
+        return
+    path = filedialog.askopenfilename(
+        title="Izaberi sliku igrača",
+        filetypes=[("Slike", "*.png *.jpg *.jpeg *.gif")])
+    if not path:
+        return
+    try:
+        set_player_photo(player_id, path)
+    except ValueError as e:
+        messagebox.showwarning("CoachTrack", str(e))
+        return
+    show_player_preview()
 
 def new_player():
     team_id = current_team_id()
@@ -270,6 +312,85 @@ def open_attendance():
     ttk.Button(buttons, text="Svi prisutni", command=all_present).pack(side="left")
     ttk.Button(buttons, text="Sačuvaj", command=save).pack(side="right")
 
+# MARCH STATS (Statistika)
+
+def open_match_stats():
+    training_id = selected_training_id()
+    if training_id is None:
+        messagebox.showinfo("CoachTrack", "Izaberi trening ili utakmicu iz liste.")
+        return
+
+    rows = get_match_stats(training_id)
+    if not rows:
+        messagebox.showinfo("CoachTrack", "U ovom timu nema igrača.")
+        return
+
+    date, title = trainings_tree.item(str(training_id), "values")[:2]
+    names = {pid: name for pid, name, goals, assists in rows}
+    stats = {pid: [goals, assists] for pid, name, goals, assists in rows}   # [golovi, asistencije]
+
+    win = tk.Toplevel(root)
+    win.title(f"Golovi i asistencije: {title} ({date})")
+    win.geometry("460x480")
+    win.transient(root)
+    win.grab_set()
+
+    ttk.Label(win, text="Izaberi igrača, pa klikni dugme.").pack(anchor="w", padx=8, pady=(8, 0))
+
+    tree = ttk.Treeview(win, columns=("name", "goals", "assists"),
+                        show="headings", selectmode="browse")
+    tree.heading("name", text="Igrač")
+    tree.heading("goals", text="Golovi")
+    tree.heading("assists", text="Asistencije")
+    tree.column("name", width=200)
+    tree.column("goals", width=90, anchor="center")
+    tree.column("assists", width=100, anchor="center")
+    tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+    total_label = ttk.Label(win)
+    total_label.pack(anchor="w", padx=8)
+
+    def update_total():
+        goals = sum(v[0] for v in stats.values())
+        assists = sum(v[1] for v in stats.values())
+        total_label.config(text=f"Ukupno: {goals} golova, {assists} asistencija")
+
+    def refresh_row(pid):
+        tree.item(str(pid), values=(names[pid], stats[pid][0], stats[pid][1]))
+        update_total()
+
+    def change(index, delta):
+        selection = tree.selection()
+        if not selection:
+            messagebox.showinfo("CoachTrack", "Izaberi igrača iz liste.", parent=win)
+            return
+        pid = int(selection[0])
+        stats[pid][index] = max(0, stats[pid][index] + delta)
+        refresh_row(pid)
+
+    def save():
+        values = {pid: (goals, assists) for pid, (goals, assists) in stats.items()}
+        try:
+            save_match_stats(training_id, values)
+        except ValueError as e:
+            messagebox.showwarning("CoachTrack", str(e), parent=win)
+            return
+        messagebox.showinfo("CoachTrack", "Sačuvano.", parent=win)
+        win.destroy()
+
+    for pid in stats:
+        tree.insert("", "end", iid=str(pid), values=(names[pid], stats[pid][0], stats[pid][1]))
+    update_total()
+
+    buttons = ttk.Frame(win)
+    buttons.pack(fill="x", padx=8, pady=(8, 2))
+    ttk.Button(buttons, text="+ Gol", command=lambda: change(0, 1)).pack(side="left", padx=2)
+    ttk.Button(buttons, text="– Gol", command=lambda: change(0, -1)).pack(side="left", padx=2)
+    ttk.Button(buttons, text="+ Asistencija", command=lambda: change(1, 1)).pack(side="left", padx=2)
+    ttk.Button(buttons, text="– Asistencija", command=lambda: change(1, -1)).pack(side="left", padx=2)
+    ttk.Button(win, text="Sačuvaj", command=save).pack(pady=8)
+
+
 def show_reminders():
     upcoming = upcoming_trainings(user_id, 24)
     if not upcoming:
@@ -289,12 +410,13 @@ def refresh_stats():
     if team_id is None:
         return
     rows = attendance_stats(team_id)
-    # najredovniji prvi; igrači bez treninga na kraju
+    totals = goal_totals(team_id)
     rows.sort(key=lambda r: (r[4] is None, -(r[4] or 0), r[1]))
     for player_id, name, total, came, percent in rows:
         shown = f"{percent}%" if percent is not None else "—"
+        goals, assists = totals.get(player_id, (0, 0))
         stats_tree.insert("", "end", iid=str(player_id),
-                          values=(name, f"{came} / {total}", shown))
+                          values=(name, f"{came} / {total}", shown, goals, assists))
 
 
 # DUGME DODAJ SLIKU
@@ -386,25 +508,31 @@ tabs.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=10)
 players_tab = ttk.Frame(tabs)
 tabs.add(players_tab, text="Igrači")
 
-players_tree = ttk.Treeview(players_tab, columns=("name", "position", "note"),
+players_body = ttk.Frame(players_tab)
+players_body.pack(fill="both", expand=True)
+
+players_tree = ttk.Treeview(players_body, columns=("name", "position", "note"),
                             show="headings", selectmode="browse")
 players_tree.heading("name", text="Ime")
 players_tree.heading("position", text="Pozicija")
 players_tree.heading("note", text="Beleška (privatna)")
-players_tree.column("name", width=160)
-players_tree.column("position", width=110)
-players_tree.column("note", width=260)
-players_tree.pack(fill="both", expand=True, padx=6, pady=6)
+players_tree.column("name", width=130)
+players_tree.column("position", width=90)
+players_tree.column("note", width=170)
+players_tree.pack(side="left", fill="both", expand=True, padx=6, pady=6)
+players_tree.bind("<<TreeviewSelect>>", show_player_preview)
+
+player_preview_label = ttk.Label(players_body, text="Izaberi igrača", anchor="center", width=28)
+player_preview_label.pack(side="right", padx=6, pady=6)
 
 player_buttons = ttk.Frame(players_tab)
 player_buttons.pack(pady=(0, 6))
 ttk.Button(player_buttons, text="Dodaj igrača", command=new_player).pack(side="left", padx=3)
 ttk.Button(player_buttons, text="Izmeni", command=edit_player).pack(side="left", padx=3)
+ttk.Button(player_buttons, text="Slika igrača", command=choose_player_photo).pack(side="left", padx=3)
 ttk.Button(player_buttons, text="Obriši", command=remove_player).pack(side="left", padx=3)
 
-
 # --- tab Treninzi ---
-
 
 trainings_tab = ttk.Frame(tabs)
 tabs.add(trainings_tab, text="Treninzi")
@@ -427,6 +555,7 @@ training_buttons.pack(pady=(0, 6))
 ttk.Button(training_buttons, text="Novi trening", command=new_training).pack(side="left", padx=3)
 ttk.Button(training_buttons, text="Prisustvo", command=open_attendance).pack(side="left", padx=3)
 ttk.Button(training_buttons, text="Obriši", command=remove_training).pack(side="left", padx=3)
+ttk.Button(training_buttons, text="Golovi / asistencije", command=open_match_stats).pack(side="left", padx=3)
 
 # --- tab Slike ---
 
@@ -458,14 +587,18 @@ ttk.Button(photo_buttons, text="Obriši", command=remove_photo).pack(side="left"
 stats_tab = ttk.Frame(tabs)
 tabs.add(stats_tab, text="Statistika")
 
-stats_tree = ttk.Treeview(stats_tab, columns=("name", "came", "percent"),
+stats_tree = ttk.Treeview(stats_tab, columns=("name", "came", "percent", "goals", "assists"),
                           show="headings", selectmode="browse")
 stats_tree.heading("name", text="Igrač")
 stats_tree.heading("came", text="Bio na treningu")
 stats_tree.heading("percent", text="Redovnost")
-stats_tree.column("name", width=200)
-stats_tree.column("came", width=140, anchor="center")
-stats_tree.column("percent", width=100, anchor="center")
+stats_tree.heading("goals", text="Golovi")
+stats_tree.heading("assists", text="Asistencije")
+stats_tree.column("name", width=160)
+stats_tree.column("came", width=110, anchor="center")
+stats_tree.column("percent", width=90, anchor="center")
+stats_tree.column("goals", width=70, anchor="center")
+stats_tree.column("assists", width=90, anchor="center")
 stats_tree.pack(fill="both", expand=True, padx=6, pady=6)
 
 # kad otvoriš tab, osveži brojeve (prisustvo se menja u drugom prozoru)
