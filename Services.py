@@ -1,0 +1,350 @@
+from Database import get_connection
+from datetime import datetime
+
+import hashlib
+import hmac
+import secrets
+import os
+import shutil
+import uuid
+
+
+# folder "slike" pored ovog fajla (pravi se sam ako ne postoji)
+PHOTOS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slike")
+os.makedirs(PHOTOS_DIR, exist_ok=True)
+
+ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif"}
+
+
+def list_teams(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name FROM teams WHERE owner_id = %s ORDER BY name", (user_id,)
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def create_team(user_id, name):
+    name = name.strip()
+    if not name:
+        raise ValueError("Unesi naziv tima.")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO teams (name, owner_id) VALUES (%s, %s)", (name, user_id)
+    )
+    conn.commit()
+    new_id = cursor.lastrowid
+    cursor.close()
+    conn.close()
+    return new_id
+
+
+def delete_team(user_id, team_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM teams WHERE id = %s AND owner_id = %s", (team_id, user_id)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def list_players(team_id):
+    """Igrači jednog tima: [(id, ime, pozicija, beleška), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name, position, note FROM players WHERE team_id = %s ORDER BY name",
+        (team_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def add_player(team_id, name, position="", note=""):
+    name = name.strip()
+    if not name:
+        raise ValueError("Unesi ime igrača.")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO players (team_id, name, position, note) VALUES (%s, %s, %s, %s)",
+        (team_id, name, position.strip() or None, note.strip() or None),
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def update_player(player_id, name, position="", note=""):
+    name = name.strip()
+    if not name:
+        raise ValueError("Unesi ime igrača.")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE players SET name = %s, position = %s, note = %s WHERE id = %s",
+        (name, position.strip() or None, note.strip() or None, player_id),
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def delete_player(player_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM players WHERE id = %s", (player_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def list_trainings(team_id):
+    """Treninzi tima, najnoviji prvi: [(id, naziv, datum, trajanje, plan), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, title, starts_at, duration_min, plan "
+        "FROM trainings WHERE team_id = %s ORDER BY starts_at DESC",
+        (team_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def create_training(team_id, title, starts_at, duration_min=90, plan=""):
+    title = title.strip()
+    if not title:
+        raise ValueError("Unesi naziv treninga.")
+    if not 0 < duration_min <= 600:
+        raise ValueError("Trajanje mora biti između 1 i 600 minuta.")
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO trainings (team_id, title, starts_at, duration_min, plan) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (team_id, title, starts_at, duration_min, plan.strip() or None),
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def delete_training(training_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM trainings WHERE id = %s", (training_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def get_attendance(training_id):
+    """Svi igrači tima tog treninga sa statusom: [(id, ime, prisutan), ...]
+    prisutan je 1 (došao), 0 (nije) ili None (još nije označeno)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT p.id, p.name, a.present "
+        "FROM trainings t "
+        "JOIN players p ON p.team_id = t.team_id "
+        "LEFT JOIN attendance a ON a.training_id = t.id AND a.player_id = p.id "
+        "WHERE t.id = %s ORDER BY p.name",
+        (training_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def save_attendance(training_id, present_ids):
+    """Igrači iz present_ids su došli, svi ostali u timu nisu."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT p.id FROM players p JOIN trainings t ON t.team_id = p.team_id WHERE t.id = %s",
+        (training_id,),
+    )
+    player_ids = [row[0] for row in cursor.fetchall()]
+
+    data = [(training_id, pid, pid in present_ids) for pid in player_ids]
+    cursor.executemany(
+        "INSERT INTO attendance (training_id, player_id, present) VALUES (%s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE present = VALUES(present)",
+        data,
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# PASSWORD
+
+def hash_password(password):
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000).hex()
+    return f"{salt}${digest}"
+
+
+def verify_password(password, stored):
+    salt, digest = stored.split("$", 1)
+    check = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000).hex()
+    return hmac.compare_digest(check, digest)
+
+# REGISTER
+
+def register(email, name, password):
+    email = email.strip().lower()
+    name = name.strip()
+    if "@" not in email:
+        raise ValueError("Unesi ispravan email.")
+    if not name:
+        raise ValueError("Unesi ime.")
+    if len(password) < 8:
+        raise ValueError("Lozinka mora imati najmanje 8 znakova.")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+    if cursor.fetchone():
+        cursor.close()
+        conn.close()
+        raise ValueError("Taj email je već registrovan.")
+
+    cursor.execute(
+        "INSERT INTO users (email, name, password_hash) VALUES (%s, %s, %s)",
+        (email, name, hash_password(password)),
+    )
+    conn.commit()
+    user_id = cursor.lastrowid
+    cursor.close()
+    conn.close()
+    return (user_id, name)
+
+
+def login(email, password):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name, password_hash FROM users WHERE email = %s",
+        (email.strip().lower(),),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if row is None or not verify_password(password, row[2]):
+        raise ValueError("Pogrešan email ili lozinka.")
+    return row[0], row[1]
+def add_photo(team_id, source_path, caption=""):
+    """Kopira sliku u folder 'slike' i upisuje je u bazu."""
+    ext = os.path.splitext(source_path)[1].lower()
+    if ext not in ALLOWED_EXT:
+        raise ValueError("Dozvoljene su samo slike: png, jpg, jpeg, gif.")
+    if not os.path.isfile(source_path):
+        raise ValueError("Fajl ne postoji.")
+
+    file_name = f"{uuid.uuid4().hex}{ext}"
+    dest = os.path.join(PHOTOS_DIR, file_name)
+    shutil.copy2(source_path, dest)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO photos (team_id, file_name, caption) VALUES (%s, %s, %s)",
+            (team_id, file_name, caption.strip() or None),
+        )
+        conn.commit()
+    except Exception:
+        if os.path.isfile(dest):      # upis nije uspeo, pa ukloni kopiju
+            os.remove(dest)
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def list_photos(team_id):
+    """Slike tima, najnovije prve: [(id, file_name, caption, created_at), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, file_name, caption, created_at FROM photos "
+        "WHERE team_id = %s ORDER BY created_at DESC, id DESC",
+        (team_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def delete_photo(photo_id):
+    """Briše sliku iz baze i fajl sa diska."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_name FROM photos WHERE id = %s", (photo_id,))
+    row = cursor.fetchone()
+    if row:
+        cursor.execute("DELETE FROM photos WHERE id = %s", (photo_id,))
+        conn.commit()
+        path = os.path.join(PHOTOS_DIR, row[0])
+        if os.path.isfile(path):
+            os.remove(path)
+    cursor.close()
+    conn.close()
+
+def upcoming_trainings(user_id, hours=24):
+    """Treninzi trenerovih timova u narednih 'hours' sati: [(vreme, naziv, tim), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT t.starts_at, t.title, tm.name "
+        "FROM trainings t JOIN teams tm ON tm.id = t.team_id "
+        "WHERE tm.owner_id = %s "
+        "AND t.starts_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL %s HOUR) "
+        "ORDER BY t.starts_at",
+        (user_id, hours),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+def attendance_stats(team_id):
+    """Po igraču: [(id, ime, ukupno treninga, bio, procenat), ...]
+    Računaju se samo treninzi za koje je prisustvo bilo sačuvano."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT p.id, p.name, "
+        "  (SELECT COUNT(DISTINCT a2.training_id) "
+        "     FROM attendance a2 JOIN trainings t2 ON t2.id = a2.training_id "
+        "     WHERE t2.team_id = p.team_id) AS total, "
+        "  COALESCE(SUM(a.present), 0) AS came "
+        "FROM players p "
+        "LEFT JOIN attendance a ON a.player_id = p.id "
+        "WHERE p.team_id = %s "
+        "GROUP BY p.id, p.name, p.team_id "
+        "ORDER BY p.name",
+        (team_id,),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    result = []
+    for player_id, name, total, came in rows:
+        total, came = int(total), int(came)
+        percent = round(came / total * 100) if total else None
+        result.append((player_id, name, total, came, percent))
+    return result
