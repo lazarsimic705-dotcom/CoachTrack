@@ -11,11 +11,13 @@ from Services import (
     list_trainings, create_training, delete_training, list_trainings, create_training, delete_training,
     get_attendance, save_attendance,  add_photo, list_photos, delete_photo,
     PHOTOS_DIR, upcoming_trainings,  attendance_stats, get_match_stats, save_match_stats,
-    goal_totals, get_player_photo, set_player_photo,
+    goal_totals, get_player_photo, set_player_photo, progress_stats,
+    send_message, list_messages, delete_message,
 )
 
 
 DATE_FMT = "%Y-%m-%d %H:%M"
+PROGRESS_WINDOW = 4
 
 #user = ask_login()
 #if user is None:
@@ -51,6 +53,8 @@ def refresh_team_data():
     refresh_trainings()
     refresh_photos()
     refresh_stats()
+    refresh_progress()
+    refresh_messages()
 
 # ---------- timovi ----------
 
@@ -194,9 +198,10 @@ def refresh_trainings():
     team_id = current_team_id()
     if team_id is None:
         return
-    for training_id, title, starts_at, duration, plan in list_trainings(team_id):
+    for training_id, title, starts_at, duration, plan, event_type in list_trainings(team_id):
         trainings_tree.insert("", "end", iid=str(training_id),
-                              values=(starts_at.strftime(DATE_FMT), title, duration, plan or ""))
+                              values=(starts_at.strftime(DATE_FMT), title,
+                                      event_type.capitalize(), duration, plan or ""))
 
 
 def new_training():
@@ -207,10 +212,16 @@ def new_training():
     title = simpledialog.askstring("Novi trening", "Naziv:", initialvalue="Trening")
     if title is None:
         return
+
+
+    is_match = messagebox.askyesno("Novi događaj", "Da li je ovo utakmica?\n\n(Ne = običan trening)")
+    event_type = "utakmica" if is_match else "trening"
+
     tomorrow = (datetime.now() + timedelta(days=1)).replace(hour=18, minute=0)
     date_text = simpledialog.askstring(
         "Novi trening", "Datum i vreme (GGGG-MM-DD ČČ:MM):",
         initialvalue=tomorrow.strftime(DATE_FMT))
+
     if date_text is None:
         return
     try:
@@ -219,11 +230,15 @@ def new_training():
         messagebox.showwarning("CoachTrack", "Datum mora biti u obliku 2026-10-27 18:00")
         return
     duration = simpledialog.askinteger("Novi trening", "Trajanje (min):", initialvalue=90)
+
     if duration is None:
         return
-    plan = simpledialog.askstring("Novi trening", "Plan vežbi:") or ""
+
+    plan = ""
+    if not is_match:  # plan vežbi se pita samo za trening
+        plan = simpledialog.askstring("Novi trening", "Plan vežbi:") or ""
     try:
-        create_training(team_id, title, starts_at, duration, plan)
+        create_training(team_id, title, starts_at, duration, plan, event_type)
     except ValueError as e:
         messagebox.showwarning("CoachTrack", str(e))
         return
@@ -394,15 +409,16 @@ def open_match_stats():
 def show_reminders():
     upcoming = upcoming_trainings(user_id, 24)
     if not upcoming:
-        return                      # nema treninga
+        return
 
     today = datetime.now().date()
     lines = []
-    for starts_at, title, team_name in upcoming:
+    for starts_at, title, team_name, event_type in upcoming:
         day = "Danas" if starts_at.date() == today else "Sutra"
-        lines.append(f"• {day} {starts_at.strftime('%H:%M')} – {title} ({team_name})")
+        label = "Utakmica" if event_type == "utakmica" else "Trening"
+        lines.append(f"• {day} {starts_at.strftime('%H:%M')} – {label}: {title} ({team_name})")
 
-    messagebox.showinfo("Podsetnik", "Treninzi u narednih 24 sata:\n\n" + "\n".join(lines))
+    messagebox.showinfo("Podsetnik", "Događaji u narednih 24 sata:\n\n" + "\n".join(lines))
 
 def refresh_stats():
     stats_tree.delete(*stats_tree.get_children())
@@ -417,6 +433,106 @@ def refresh_stats():
         goals, assists = totals.get(player_id, (0, 0))
         stats_tree.insert("", "end", iid=str(player_id),
                           values=(name, f"{came} / {total}", shown, goals, assists))
+
+# STATISTIKA IGRACA
+
+def trend_of(pct_recent, pct_prev, c_recent, c_prev):
+    """Vraća (ocena, tekst). Ocena > 0 napreduje, < 0 nazaduje."""
+    if pct_prev is None:
+        return 0, "— nema dovoljno podataka"
+    score = 0
+    diff = pct_recent - pct_prev
+    if diff >= 10:
+        score += 1
+    elif diff <= -10:
+        score -= 1
+    if c_recent > c_prev:
+        score += 1
+    elif c_recent < c_prev:
+        score -= 1
+    if score > 0:
+        return score, "↑ napreduje"
+    if score < 0:
+        return score, "↓ ne napreduje"
+    return 0, "→ isto"
+
+
+def refresh_progress():
+    progress_tree.delete(*progress_tree.get_children())
+    team_id = current_team_id()
+    if team_id is None:
+        return
+    rows = []
+    for player_id, name, pct_recent, pct_prev, c_recent, c_prev in progress_stats(team_id, PROGRESS_WINDOW):
+        score, text = trend_of(pct_recent, pct_prev, c_recent, c_prev)
+        rows.append((score, name, player_id, pct_recent, pct_prev, c_recent, c_prev, text))
+    rows.sort(key=lambda r: (-r[0], r[1]))        # najbolji prvi
+    for score, name, player_id, pct_recent, pct_prev, c_recent, c_prev, text in rows:
+        recent_text = f"{pct_recent}%" if pct_recent is not None else "—"
+        prev_text = f"{pct_prev}%" if pct_prev is not None else "—"
+        progress_tree.insert("", "end", iid=str(player_id),
+                             values=(name, recent_text, prev_text, c_recent, c_prev, text))
+
+
+def on_tab_changed(event=None):
+    refresh_stats()
+    refresh_progress()
+
+
+# PORUKE
+
+message_bodies = {}
+
+
+def selected_message_id():
+    selection = messages_tree.selection()
+    return int(selection[0]) if selection else None
+
+
+def refresh_messages():
+    messages_tree.delete(*messages_tree.get_children())
+    message_bodies.clear()
+    team_id = current_team_id()
+    if team_id is None:
+        return
+    for message_id, author, body, created_at in list_messages(team_id):
+        message_bodies[message_id] = (author, created_at, body)
+        one_line = body.replace("\n", " ")
+        messages_tree.insert("", "end", iid=str(message_id),
+                             values=(created_at.strftime(DATE_FMT), author, one_line))
+
+
+def send_new_message(event=None):
+    team_id = current_team_id()
+    if team_id is None:
+        messagebox.showinfo("CoachTrack", "Prvo izaberi ili napravi tim.")
+        return
+    try:
+        send_message(team_id, user_id, message_entry.get())
+    except ValueError as e:
+        messagebox.showwarning("CoachTrack", str(e))
+        return
+    message_entry.delete(0, "end")
+    refresh_messages()
+
+
+def show_message(event=None):
+    message_id = selected_message_id()
+    if message_id is None:
+        return
+    author, created_at, body = message_bodies[message_id]
+    messagebox.showinfo(f"{author} – {created_at.strftime(DATE_FMT)}", body)
+
+
+def remove_message():
+    message_id = selected_message_id()
+    if message_id is None:
+        messagebox.showinfo("CoachTrack", "Izaberi poruku iz liste.")
+        return
+    if messagebox.askyesno("CoachTrack", "Obrisati poruku?"):
+        delete_message(message_id, user_id)
+        refresh_messages()
+
 
 
 # DUGME DODAJ SLIKU
@@ -537,16 +653,18 @@ ttk.Button(player_buttons, text="Obriši", command=remove_player).pack(side="lef
 trainings_tab = ttk.Frame(tabs)
 tabs.add(trainings_tab, text="Treninzi")
 
-trainings_tree = ttk.Treeview(trainings_tab, columns=("date", "title", "duration", "plan"),
+trainings_tree = ttk.Treeview(trainings_tab, columns=("date", "title", "type", "duration", "plan"),
                               show="headings", selectmode="browse")
 trainings_tree.heading("date", text="Datum i vreme")
 trainings_tree.heading("title", text="Naziv")
+trainings_tree.heading("type", text="Vrsta")
 trainings_tree.heading("duration", text="Min")
 trainings_tree.heading("plan", text="Plan vežbi")
-trainings_tree.column("date", width=130)
-trainings_tree.column("title", width=140)
-trainings_tree.column("duration", width=50)
-trainings_tree.column("plan", width=250)
+trainings_tree.column("date", width=125)
+trainings_tree.column("title", width=130)
+trainings_tree.column("type", width=75)
+trainings_tree.column("duration", width=45)
+trainings_tree.column("plan", width=200)
 trainings_tree.pack(fill="both", expand=True, padx=6, pady=6)
 trainings_tree.bind("<Double-1>", lambda event: open_attendance())
 
@@ -602,9 +720,56 @@ stats_tree.column("assists", width=90, anchor="center")
 stats_tree.pack(fill="both", expand=True, padx=6, pady=6)
 
 # kad otvoriš tab, osveži brojeve (prisustvo se menja u drugom prozoru)
-tabs.bind("<<NotebookTabChanged>>", lambda event: refresh_stats())
+tabs.bind("<<NotebookTabChanged>>", on_tab_changed)
 
 
+# --- tab Napredak ---
+progress_tab = ttk.Frame(tabs)
+tabs.add(progress_tab, text="Napredak")
+
+progress_tree = ttk.Treeview(
+    progress_tab, columns=("name", "recent", "previous", "c_recent", "c_previous", "trend"),
+    show="headings", selectmode="browse")
+progress_tree.heading("name", text="Igrač")
+progress_tree.heading("recent", text="Redovnost skoro")
+progress_tree.heading("previous", text="Ranije")
+progress_tree.heading("c_recent", text="G+A skoro")
+progress_tree.heading("c_previous", text="G+A ranije")
+progress_tree.heading("trend", text="Trend")
+progress_tree.column("name", width=120)
+progress_tree.column("recent", width=100, anchor="center")
+progress_tree.column("previous", width=70, anchor="center")
+progress_tree.column("c_recent", width=80, anchor="center")
+progress_tree.column("c_previous", width=80, anchor="center")
+progress_tree.column("trend", width=160)
+progress_tree.pack(fill="both", expand=True, padx=6, pady=6)
+
+ttk.Label(progress_tab,
+          text=f"Poredi poslednjih {PROGRESS_WINDOW} događaja sa {PROGRESS_WINDOW} pre njih. G+A = golovi + asistencije.").pack(pady=(0, 6))
+
+# --- tab Poruke ---
+
+messages_tab = ttk.Frame(tabs)
+tabs.add(messages_tab, text="Poruke")
+
+messages_tree = ttk.Treeview(messages_tab, columns=("time", "author", "body"),
+                             show="headings", selectmode="browse")
+messages_tree.heading("time", text="Vreme")
+messages_tree.heading("author", text="Autor")
+messages_tree.heading("body", text="Poruka")
+messages_tree.column("time", width=120)
+messages_tree.column("author", width=100)
+messages_tree.column("body", width=300)
+messages_tree.pack(fill="both", expand=True, padx=6, pady=6)
+messages_tree.bind("<Double-1>", show_message)
+
+message_input = ttk.Frame(messages_tab)
+message_input.pack(fill="x", padx=6, pady=(0, 6))
+message_entry = ttk.Entry(message_input)
+message_entry.pack(side="left", fill="x", expand=True)
+message_entry.bind("<Return>", send_new_message)
+ttk.Button(message_input, text="Pošalji", command=send_new_message).pack(side="left", padx=(6, 0))
+ttk.Button(message_input, text="Obriši", command=remove_message).pack(side="left", padx=(6, 0))
 
 # ---------- pokretanje ----------
 

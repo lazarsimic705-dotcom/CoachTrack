@@ -110,12 +110,13 @@ def delete_player(player_id):
         if os.path.isfile(path):
             os.remove(path)
 
+
 def list_trainings(team_id):
-    """Treninzi tima, najnoviji prvi: [(id, naziv, datum, trajanje, plan), ...]"""
+    """Događaji tima, najnoviji prvi: [(id, naziv, datum, trajanje, plan, vrsta), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT id, title, starts_at, duration_min, plan "
+        "SELECT id, title, starts_at, duration_min, plan, event_type "
         "FROM trainings WHERE team_id = %s ORDER BY starts_at DESC",
         (team_id,),
     )
@@ -125,23 +126,45 @@ def list_trainings(team_id):
     return rows
 
 
-def create_training(team_id, title, starts_at, duration_min=90, plan=""):
+def upcoming_trainings(user_id, hours=24):
+    """Događaji u narednih 'hours' sati: [(vreme, naziv, tim, vrsta), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT t.starts_at, t.title, tm.name, t.event_type "
+        "FROM trainings t JOIN teams tm ON tm.id = t.team_id "
+        "WHERE tm.owner_id = %s "
+        "AND t.starts_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL %s HOUR) "
+        "ORDER BY t.starts_at",
+        (user_id, hours),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+EVENT_TYPES = ("trening", "utakmica")
+
+
+def create_training(team_id, title, starts_at, duration_min=90, plan="", event_type="trening"):
     title = title.strip()
     if not title:
         raise ValueError("Unesi naziv treninga.")
     if not 0 < duration_min <= 600:
         raise ValueError("Trajanje mora biti između 1 i 600 minuta.")
+    if event_type not in EVENT_TYPES:
+        raise ValueError("Vrsta događaja mora biti trening ili utakmica.")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO trainings (team_id, title, starts_at, duration_min, plan) "
-        "VALUES (%s, %s, %s, %s, %s)",
-        (team_id, title, starts_at, duration_min, plan.strip() or None),
+        "INSERT INTO trainings (team_id, title, starts_at, duration_min, plan, event_type) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (team_id, title, starts_at, duration_min, plan.strip() or None, event_type),
     )
     conn.commit()
     cursor.close()
     conn.close()
-
 
 def delete_training(training_id):
     conn = get_connection()
@@ -307,23 +330,6 @@ def delete_photo(photo_id):
     cursor.close()
     conn.close()
 
-def upcoming_trainings(user_id, hours=24):
-    """Treninzi trenerovih timova u narednih 'hours' sati: [(vreme, naziv, tim), ...]"""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT t.starts_at, t.title, tm.name "
-        "FROM trainings t JOIN teams tm ON tm.id = t.team_id "
-        "WHERE tm.owner_id = %s "
-        "AND t.starts_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL %s HOUR) "
-        "ORDER BY t.starts_at",
-        (user_id, hours),
-    )
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return rows
-
 def attendance_stats(team_id):
     """Po igraču: [(id, ime, ukupno treninga, bio, procenat), ...]
     Računaju se samo treninzi za koje je prisustvo bilo sačuvano."""
@@ -467,4 +473,108 @@ def set_player_photo(player_id, source_path):
         if os.path.isfile(old_path):
             os.remove(old_path)
 
+# STATISTIKA IGRACA
+
+def progress_stats(team_id, n=5):
+    """Poredi poslednjih n događaja sa n pre njih.
+    Vraća: [(id, ime, redovnost skoro %, redovnost ranije %, doprinos skoro, doprinos ranije), ...]
+    Redovnost ranije je None ako nema dovoljno ranijih događaja."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # događaji sa sačuvanim prisustvom, najnoviji prvi
+    cursor.execute(
+        "SELECT t.id FROM trainings t "
+        "WHERE t.team_id = %s AND EXISTS (SELECT 1 FROM attendance a WHERE a.training_id = t.id) "
+        "ORDER BY t.starts_at DESC, t.id DESC",
+        (team_id,),
+    )
+    event_ids = [row[0] for row in cursor.fetchall()]
+
+    cursor.execute("SELECT id, name FROM players WHERE team_id = %s ORDER BY name", (team_id,))
+    players = cursor.fetchall()
+
+    cursor.execute(
+        "SELECT a.player_id, a.training_id, a.present "
+        "FROM attendance a JOIN trainings t ON t.id = a.training_id WHERE t.team_id = %s",
+        (team_id,),
+    )
+    present = {(pid, tid): bool(p) for pid, tid, p in cursor.fetchall()}
+
+    cursor.execute(
+        "SELECT m.player_id, m.training_id, m.goals + m.assists "
+        "FROM match_stats m JOIN trainings t ON t.id = m.training_id WHERE t.team_id = %s",
+        (team_id,),
+    )
+    contrib = {(pid, tid): int(c) for pid, tid, c in cursor.fetchall()}
+
+    cursor.close()
+    conn.close()
+
+    recent = set(event_ids[:n])
+    previous = set(event_ids[n:2 * n])
+
+    result = []
+    for pid, name in players:
+        came_recent = sum(1 for tid in recent if present.get((pid, tid)))
+        came_prev = sum(1 for tid in previous if present.get((pid, tid)))
+        pct_recent = round(came_recent / len(recent) * 100) if recent else None
+        pct_prev = round(came_prev / len(previous) * 100) if previous else None
+        c_recent = sum(contrib.get((pid, tid), 0) for tid in recent)
+        c_prev = sum(contrib.get((pid, tid), 0) for tid in previous)
+        result.append((pid, name, pct_recent, pct_prev, c_recent, c_prev))
+    return result
+
+# PORUKE
+
+def send_message(team_id, user_id, body):
+    body = body.strip()
+    if not body:
+        raise ValueError("Upiši poruku.")
+    if len(body) > 2000:
+        raise ValueError("Poruka je predugačka (najviše 2000 znakova).")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    # poruku može da piše samo vlasnik tima
+    cursor.execute("SELECT 1 FROM teams WHERE id = %s AND owner_id = %s", (team_id, user_id))
+    if cursor.fetchone() is None:
+        cursor.close()
+        conn.close()
+        raise ValueError("Tim nije pronađen.")
+    cursor.execute(
+        "INSERT INTO messages (team_id, user_id, body) VALUES (%s, %s, %s)",
+        (team_id, user_id, body),
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def list_messages(team_id, limit=100):
+    """Poruke tima, najnovije prve: [(id, autor, tekst, vreme), ...]"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT m.id, u.name, m.body, m.created_at "
+        "FROM messages m JOIN users u ON u.id = m.user_id "
+        "WHERE m.team_id = %s ORDER BY m.created_at DESC, m.id DESC LIMIT %s",
+        (team_id, limit),
+    )
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows
+
+
+def delete_message(message_id, user_id):
+    """Briše poruku samo ako ju je napisao taj korisnik."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM messages WHERE id = %s AND user_id = %s", (message_id, user_id)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
 
