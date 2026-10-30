@@ -9,7 +9,7 @@ import shutil
 import uuid
 
 
-# folder "slike" pored ovog fajla (pravi se sam ako ne postoji)
+
 PHOTOS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slike")
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 
@@ -56,7 +56,7 @@ def create_team(user_id, name):
         if limit is not None:
             cursor.execute("SELECT COUNT(*) FROM teams WHERE owner_id = %s", (user_id,))
             if cursor.fetchone()[0] >= limit:
-                raise ValueError(f"FREE plan dozvoljava {limit} tim. Pređi na PRO za više timova.")
+                raise ValueError(f"FREE plan dozvoljava {limit} tim. Predji na PRO za vise timova.")
         cursor.execute(
             "INSERT INTO teams (name, owner_id) VALUES (%s, %s)", (name, user_id)
         )
@@ -79,7 +79,6 @@ def delete_team(user_id, team_id):
     conn.close()
 
 def list_players(team_id):
-    """Igrači jednog tima: [(id, ime, pozicija, beleška), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -95,7 +94,7 @@ def list_players(team_id):
 def add_player(team_id, name, position="", note=""):
     name = name.strip()
     if not name:
-        raise ValueError("Unesi ime igrača.")
+        raise ValueError("Unesi ime igraca.")
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -111,7 +110,7 @@ def add_player(team_id, name, position="", note=""):
         if limit is not None:
             cursor.execute("SELECT COUNT(*) FROM players WHERE team_id = %s", (team_id,))
             if cursor.fetchone()[0] >= limit:
-                raise ValueError(f"FREE plan dozvoljava do {limit} igrača po timu. Pređi na PRO.")
+                raise ValueError(f"FREE plan dozvoljava do {limit} igraca po timu. Predji na PRO.")
 
         cursor.execute(
             "INSERT INTO players (team_id, name, position, note) VALUES (%s, %s, %s, %s)",
@@ -126,7 +125,7 @@ def add_player(team_id, name, position="", note=""):
 def update_player(player_id, name, position="", note=""):
     name = name.strip()
     if not name:
-        raise ValueError("Unesi ime igrača.")
+        raise ValueError("Unesi ime igraca.")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -152,7 +151,6 @@ def delete_player(player_id):
 
 
 def list_trainings(team_id):
-    """Događaji tima, najnoviji prvi: [(id, naziv, datum, trajanje, plan, vrsta), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -167,7 +165,6 @@ def list_trainings(team_id):
 
 
 def upcoming_trainings(user_id, hours=24):
-    """Događaji u narednih 'hours' sati: [(vreme, naziv, tim, vrsta), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -192,9 +189,9 @@ def create_training(team_id, title, starts_at, duration_min=90, plan="", event_t
     if not title:
         raise ValueError("Unesi naziv treninga.")
     if not 0 < duration_min <= 600:
-        raise ValueError("Trajanje mora biti između 1 i 600 minuta.")
+        raise ValueError("Trajanje mora biti izmedju 1 i 600 minuta.")
     if event_type not in EVENT_TYPES:
-        raise ValueError("Vrsta događaja mora biti trening ili utakmica.")
+        raise ValueError("Vrsta dogadjaja mora biti trening ili utakmica.")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -215,8 +212,6 @@ def delete_training(training_id):
     conn.close()
 
 def get_attendance(training_id):
-    """Svi igrači tima tog treninga sa statusom: [(id, ime, prisutan), ...]
-    prisutan je 1 (došao), 0 (nije) ili None (još nije označeno)."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -234,7 +229,6 @@ def get_attendance(training_id):
 
 
 def save_attendance(training_id, present_ids):
-    """Igrači iz present_ids su došli, svi ostali u timu nisu."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -253,7 +247,7 @@ def save_attendance(training_id, present_ids):
     cursor.close()
     conn.close()
 
-# PASSWORD
+# ---------- Password ----------
 
 def hash_password(password):
     salt = secrets.token_hex(16)
@@ -266,7 +260,8 @@ def verify_password(password, stored):
     check = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200_000).hex()
     return hmac.compare_digest(check, digest)
 
-# REGISTER
+
+# ---------- Registracija ----------
 
 def register(email, name, password):
     email = email.strip().lower()
@@ -284,7 +279,7 @@ def register(email, name, password):
     if cursor.fetchone():
         cursor.close()
         conn.close()
-        raise ValueError("Taj email je već registrovan.")
+        raise ValueError("Taj email je vec registrovan.")
 
     cursor.execute(
         "INSERT INTO users (email, name, password_hash) VALUES (%s, %s, %s)",
@@ -332,7 +327,7 @@ def add_photo(team_id, source_path, caption=""):
         )
         conn.commit()
     except Exception:
-        if os.path.isfile(dest):      # upis nije uspeo, pa ukloni kopiju
+        if os.path.isfile(dest):
             os.remove(dest)
         raise
     finally:
@@ -341,7 +336,6 @@ def add_photo(team_id, source_path, caption=""):
 
 
 def list_photos(team_id):
-    """Slike tima, najnovije prve: [(id, file_name, caption, created_at), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -356,7 +350,6 @@ def list_photos(team_id):
 
 
 def delete_photo(photo_id):
-    """Briše sliku iz baze i fajl sa diska."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT file_name FROM photos WHERE id = %s", (photo_id,))
@@ -371,8 +364,6 @@ def delete_photo(photo_id):
     conn.close()
 
 def attendance_stats(team_id):
-    """Po igraču: [(id, ime, ukupno treninga, bio, procenat), ...]
-    Računaju se samo treninzi za koje je prisustvo bilo sačuvano."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -402,7 +393,6 @@ def attendance_stats(team_id):
 # ----- SLIKA IGRACA ------
 
 def get_match_stats(training_id):
-    """Svi igrači tima tog događaja: [(id igrača, ime, golovi, asistencije), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -420,7 +410,6 @@ def get_match_stats(training_id):
 
 
 def save_match_stats(training_id, values):
-    """values je rečnik {id igrača: (golovi, asistencije)}."""
     for goals, assists in values.values():
         if goals < 0 or assists < 0:
             raise ValueError("Golovi i asistencije ne mogu biti negativni.")
@@ -450,7 +439,6 @@ def save_match_stats(training_id, values):
     conn.close()
 
 def goal_totals(team_id):
-    """Ukupni golovi i asistencije po igraču: {id igrača: (golovi, asistencije)}"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -466,7 +454,6 @@ def goal_totals(team_id):
 
 
 def get_player_photo(player_id):
-    """Vraća ime fajla slike igrača ili None."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT photo_file FROM players WHERE id = %s", (player_id,))
@@ -477,7 +464,6 @@ def get_player_photo(player_id):
 
 
 def set_player_photo(player_id, source_path):
-    """Kopira sliku u folder 'slike' i vezuje je za igrača. Staru sliku briše."""
     ext = os.path.splitext(source_path)[1].lower()
     if ext not in ALLOWED_EXT:
         raise ValueError("Dozvoljene su samo slike: png, jpg, jpeg, gif.")
@@ -497,7 +483,7 @@ def set_player_photo(player_id, source_path):
             "UPDATE players SET photo_file = %s WHERE id = %s", (file_name, player_id)
         )
         if cursor.rowcount == 0:
-            raise ValueError("Igrač ne postoji.")
+            raise ValueError("Igrac ne postoji.")
         conn.commit()
     except Exception:
         if os.path.isfile(dest):
@@ -507,22 +493,18 @@ def set_player_photo(player_id, source_path):
         cursor.close()
         conn.close()
 
-    # tek kad je novo sačuvano, ukloni staru sliku
+
     if old_file:
         old_path = os.path.join(PHOTOS_DIR, old_file)
         if os.path.isfile(old_path):
             os.remove(old_path)
 
-# STATISTIKA IGRACA
+# ---------- Statistika igraca ----------
 
 def progress_stats(team_id, n=5):
-    """Poredi poslednjih n događaja sa n pre njih.
-    Vraća: [(id, ime, redovnost skoro %, redovnost ranije %, doprinos skoro, doprinos ranije), ...]
-    Redovnost ranije je None ako nema dovoljno ranijih događaja."""
     conn = get_connection()
     cursor = conn.cursor()
 
-    # događaji sa sačuvanim prisustvom, najnoviji prvi
     cursor.execute(
         "SELECT t.id FROM trainings t "
         "WHERE t.team_id = %s AND EXISTS (SELECT 1 FROM attendance a WHERE a.training_id = t.id) "
@@ -565,14 +547,14 @@ def progress_stats(team_id, n=5):
         result.append((pid, name, pct_recent, pct_prev, c_recent, c_prev))
     return result
 
-# PORUKE
+# ---------- Poruke ----------
 
 def send_message(team_id, user_id, body):
     body = body.strip()
     if not body:
-        raise ValueError("Upiši poruku.")
+        raise ValueError("Upisi poruku.")
     if len(body) > 2000:
-        raise ValueError("Poruka je predugačka (najviše 2000 znakova).")
+        raise ValueError("Poruka je predugacka (najvise 2000 znakova).")
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -581,7 +563,7 @@ def send_message(team_id, user_id, body):
     if cursor.fetchone() is None:
         cursor.close()
         conn.close()
-        raise ValueError("Tim nije pronađen.")
+        raise ValueError("Tim nije pronadjen.")
     cursor.execute(
         "INSERT INTO messages (team_id, user_id, body) VALUES (%s, %s, %s)",
         (team_id, user_id, body),
@@ -592,7 +574,6 @@ def send_message(team_id, user_id, body):
 
 
 def list_messages(team_id, limit=100):
-    """Poruke tima, najnovije prve: [(id, autor, tekst, vreme), ...]"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -608,7 +589,6 @@ def list_messages(team_id, limit=100):
 
 
 def delete_message(message_id, user_id):
-    """Briše poruku samo ako ju je napisao taj korisnik."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(

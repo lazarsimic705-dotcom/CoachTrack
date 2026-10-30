@@ -31,10 +31,10 @@ root = tk.Tk()
 root.title(f"CoachTrack – {user_name} ({plan.upper()})")
 root.geometry("900x520")
 
-teams = []   # timovi koji su trenutno na ekranu: [(id, naziv), ...]
+teams = []
 
 
-# ---------- pomoćne ----------
+# ---------- pomocne ----------
 
 def current_team_id():
     selection = team_list.curselection()
@@ -94,8 +94,8 @@ def remove_team():
         refresh_teams()
 
 
-# ---------- igrači ----------
-player_preview_image = None   # mora ostati sačuvana, inače slika nestane
+# ---------- igraci ----------
+player_preview_image = None   # mora ostati sacuvana, inace slika nestane
 
 
 def refresh_players():
@@ -217,7 +217,7 @@ def new_training():
         return
 
 
-    is_match = messagebox.askyesno("Novi događaj", "Da li je ovo utakmica?\n\n(Ne = običan trening)")
+    is_match = messagebox.askyesno("Novi dogadjaj", "Da li je ovo utakmica?\n\n(Ne = obican trening)")
     event_type = "utakmica" if is_match else "trening"
 
     tomorrow = (datetime.now() + timedelta(days=1)).replace(hour=18, minute=0)
@@ -265,12 +265,11 @@ def open_attendance():
 
     rows = get_attendance(training_id)
     if not rows:
-        messagebox.showinfo("CoachTrack", "U ovom timu nema igrača.")
+        messagebox.showinfo("CoachTrack", "U ovom timu nema igraca.")
         return
 
     date, title = trainings_tree.item(str(training_id), "values")[:2]
     names = {pid: name for pid, name, present in rows}
-    # True = došao, False = nije, None = nije označeno
     state = {pid: (None if present is None else bool(present)) for pid, name, present in rows}
 
     win = tk.Toplevel(root)
@@ -279,10 +278,10 @@ def open_attendance():
     win.transient(root)
     win.grab_set()
 
-    ttk.Label(win, text="Klikni na igrača da promeniš status.").pack(anchor="w", padx=8, pady=(8, 0))
+    ttk.Label(win, text="Klikni na igraca da promenis status.").pack(anchor="w", padx=8, pady=(8, 0))
 
     tree = ttk.Treeview(win, columns=("name", "status"), show="headings", selectmode="none")
-    tree.heading("name", text="Igrač")
+    tree.heading("name", text="Igrac")
     tree.heading("status", text="Status")
     tree.column("name", width=240)
     tree.column("status", width=120, anchor="center")
@@ -292,11 +291,11 @@ def open_attendance():
     counter.pack(anchor="w", padx=8)
 
     def label(pid):
-        return {True: "✔ Došao", False: "✘ Nije", None: "—"}[state[pid]]
+        return {True: "✔ Dosao", False: "✘ Nije", None: "—"}[state[pid]]
 
     def update_counter():
         present_count = sum(1 for value in state.values() if value)
-        counter.config(text=f"Došlo: {present_count} / {len(state)}")
+        counter.config(text=f"Doslo: {present_count} / {len(state)}")
 
     def refresh_row(pid):
         tree.item(str(pid), values=(names[pid], label(pid)))
@@ -317,7 +316,7 @@ def open_attendance():
     def save():
         present_ids = {pid for pid, value in state.items() if value}
         save_attendance(training_id, present_ids)
-        messagebox.showinfo("CoachTrack", "Prisustvo je sačuvano.", parent=win)
+        messagebox.showinfo("CoachTrack", "Prisustvo je sacuvano.", parent=win)
         win.destroy()
 
     for pid in state:
@@ -328,7 +327,7 @@ def open_attendance():
     buttons = ttk.Frame(win)
     buttons.pack(fill="x", padx=8, pady=8)
     ttk.Button(buttons, text="Svi prisutni", command=all_present).pack(side="left")
-    ttk.Button(buttons, text="Sačuvaj", command=save).pack(side="right")
+    ttk.Button(buttons, text="Sacuvaj", command=save).pack(side="right")
 
 # MARCH STATS (Statistika)
 
@@ -380,7 +379,7 @@ def open_match_stats():
     def change(index, delta):
         selection = tree.selection()
         if not selection:
-            messagebox.showinfo("CoachTrack", "Izaberi igrača iz liste.", parent=win)
+            messagebox.showinfo("CoachTrack", "Izaberi igraca iz liste.", parent=win)
             return
         pid = int(selection[0])
         stats[pid][index] = max(0, stats[pid][index] + delta)
@@ -393,7 +392,7 @@ def open_match_stats():
         except ValueError as e:
             messagebox.showwarning("CoachTrack", str(e), parent=win)
             return
-        messagebox.showinfo("CoachTrack", "Sačuvano.", parent=win)
+        messagebox.showinfo("CoachTrack", "Sacuvano.", parent=win)
         win.destroy()
 
     for pid in stats:
@@ -406,7 +405,7 @@ def open_match_stats():
     ttk.Button(buttons, text="– Gol", command=lambda: change(0, -1)).pack(side="left", padx=2)
     ttk.Button(buttons, text="+ Asistencija", command=lambda: change(1, 1)).pack(side="left", padx=2)
     ttk.Button(buttons, text="– Asistencija", command=lambda: change(1, -1)).pack(side="left", padx=2)
-    ttk.Button(win, text="Sačuvaj", command=save).pack(pady=8)
+    ttk.Button(win, text="Sacuvaj", command=save).pack(pady=8)
 
 
 def show_reminders():
@@ -439,10 +438,10 @@ def refresh_stats():
         stats_tree.insert("", "end", iid=str(player_id),
                           values=(name, f"{came} / {total}", shown, goals, assists))
 
-# STATISTIKA IGRACA
+# ---------- Statistika igraca ----------
 
 def trend_of(pct_recent, pct_prev, c_recent, c_prev):
-    """Vraća (ocena, tekst). Ocena > 0 napreduje, < 0 nazaduje."""
+    """Vraća (ocena, tekst)"""
     if pct_prev is None:
         return 0, "— nema dovoljno podataka"
     score = 0
@@ -484,7 +483,7 @@ def on_tab_changed(event=None):
     refresh_progress()
 
 
-# PORUKE
+# ---------- Poruke ----------
 
 message_bodies = {}
 
@@ -540,7 +539,7 @@ def remove_message():
 
 
 
-# DUGME DODAJ SLIKU
+# ---------- Dugme za sliku ----------
 
 def selected_photo_id():
     selection = photos_tree.selection()
@@ -643,15 +642,15 @@ players_tree.column("note", width=170)
 players_tree.pack(side="left", fill="both", expand=True, padx=6, pady=6)
 players_tree.bind("<<TreeviewSelect>>", show_player_preview)
 
-player_preview_label = ttk.Label(players_body, text="Izaberi igrača", anchor="center", width=28)
+player_preview_label = ttk.Label(players_body, text="Izaberi igraca", anchor="center", width=28)
 player_preview_label.pack(side="right", padx=6, pady=6)
 
 player_buttons = ttk.Frame(players_tab)
 player_buttons.pack(pady=(0, 6))
-ttk.Button(player_buttons, text="Dodaj igrača", command=new_player).pack(side="left", padx=3)
+ttk.Button(player_buttons, text="Dodaj igraca", command=new_player).pack(side="left", padx=3)
 ttk.Button(player_buttons, text="Izmeni", command=edit_player).pack(side="left", padx=3)
-ttk.Button(player_buttons, text="Slika igrača", command=choose_player_photo).pack(side="left", padx=3)
-ttk.Button(player_buttons, text="Obriši", command=remove_player).pack(side="left", padx=3)
+ttk.Button(player_buttons, text="Slika igraca", command=choose_player_photo).pack(side="left", padx=3)
+ttk.Button(player_buttons, text="Obrisi", command=remove_player).pack(side="left", padx=3)
 
 # --- tab Treninzi ---
 
@@ -664,7 +663,7 @@ trainings_tree.heading("date", text="Datum i vreme")
 trainings_tree.heading("title", text="Naziv")
 trainings_tree.heading("type", text="Vrsta")
 trainings_tree.heading("duration", text="Min")
-trainings_tree.heading("plan", text="Plan vežbi")
+trainings_tree.heading("plan", text="Plan vezbi")
 trainings_tree.column("date", width=125)
 trainings_tree.column("title", width=130)
 trainings_tree.column("type", width=75)
@@ -677,7 +676,7 @@ training_buttons = ttk.Frame(trainings_tab)
 training_buttons.pack(pady=(0, 6))
 ttk.Button(training_buttons, text="Novi trening", command=new_training).pack(side="left", padx=3)
 ttk.Button(training_buttons, text="Prisustvo", command=open_attendance).pack(side="left", padx=3)
-ttk.Button(training_buttons, text="Obriši", command=remove_training).pack(side="left", padx=3)
+ttk.Button(training_buttons, text="Obrisi", command=remove_training).pack(side="left", padx=3)
 ttk.Button(training_buttons, text="Golovi / asistencije", command=open_match_stats).pack(side="left", padx=3)
 
 # --- tab Slike ---
@@ -703,7 +702,7 @@ preview_label.pack(side="right", padx=6, pady=6)
 photo_buttons = ttk.Frame(photos_tab)
 photo_buttons.pack(pady=(0, 6))
 ttk.Button(photo_buttons, text="Dodaj sliku", command=new_photo).pack(side="left", padx=3)
-ttk.Button(photo_buttons, text="Obriši", command=remove_photo).pack(side="left", padx=3)
+ttk.Button(photo_buttons, text="Obrisi", command=remove_photo).pack(side="left", padx=3)
 
 # --- tab Statistika ---
 
@@ -724,7 +723,7 @@ stats_tree.column("goals", width=70, anchor="center")
 stats_tree.column("assists", width=90, anchor="center")
 stats_tree.pack(fill="both", expand=True, padx=6, pady=6)
 
-# kad otvoriš tab, osveži brojeve (prisustvo se menja u drugom prozoru)
+
 tabs.bind("<<NotebookTabChanged>>", on_tab_changed)
 
 
@@ -735,7 +734,7 @@ tabs.add(progress_tab, text="Napredak")
 progress_tree = ttk.Treeview(
     progress_tab, columns=("name", "recent", "previous", "c_recent", "c_previous", "trend"),
     show="headings", selectmode="browse")
-progress_tree.heading("name", text="Igrač")
+progress_tree.heading("name", text="Igrac")
 progress_tree.heading("recent", text="Redovnost skoro")
 progress_tree.heading("previous", text="Ranije")
 progress_tree.heading("c_recent", text="G+A skoro")
@@ -750,7 +749,7 @@ progress_tree.column("trend", width=160)
 progress_tree.pack(fill="both", expand=True, padx=6, pady=6)
 
 ttk.Label(progress_tab,
-          text=f"Poredi poslednjih {PROGRESS_WINDOW} događaja sa {PROGRESS_WINDOW} pre njih. G+A = golovi + asistencije.").pack(pady=(0, 6))
+          text=f"Poredi poslednjih {PROGRESS_WINDOW} dogadjaja sa {PROGRESS_WINDOW} pre njih. G+A = golovi + asistencije.").pack(pady=(0, 6))
 
 # --- tab Poruke ---
 
@@ -773,8 +772,8 @@ message_input.pack(fill="x", padx=6, pady=(0, 6))
 message_entry = ttk.Entry(message_input)
 message_entry.pack(side="left", fill="x", expand=True)
 message_entry.bind("<Return>", send_new_message)
-ttk.Button(message_input, text="Pošalji", command=send_new_message).pack(side="left", padx=(6, 0))
-ttk.Button(message_input, text="Obriši", command=remove_message).pack(side="left", padx=(6, 0))
+ttk.Button(message_input, text="Posalji", command=send_new_message).pack(side="left", padx=(6, 0))
+ttk.Button(message_input, text="Obrisi", command=remove_message).pack(side="left", padx=(6, 0))
 
 # ---------- pokretanje ----------
 # FREE plan: PRO tabovi su zaključani
