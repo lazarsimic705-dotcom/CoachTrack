@@ -27,20 +27,44 @@ def list_teams(user_id):
     conn.close()
     return rows
 
+# FREE I PRO
+
+PLAN_LIMITS = {
+    "free": {"teams": 1, "players": 2},
+    "pro": {"teams": None, "players": None},
+}
+
+
+def get_user_plan(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT plan FROM users WHERE id = %s", (user_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row[0] if row and row[0] in PLAN_LIMITS else "free"
 
 def create_team(user_id, name):
     name = name.strip()
     if not name:
         raise ValueError("Unesi naziv tima.")
+    limit = PLAN_LIMITS[get_user_plan(user_id)]["teams"]
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO teams (name, owner_id) VALUES (%s, %s)", (name, user_id)
-    )
-    conn.commit()
-    new_id = cursor.lastrowid
-    cursor.close()
-    conn.close()
+    try:
+        if limit is not None:
+            cursor.execute("SELECT COUNT(*) FROM teams WHERE owner_id = %s", (user_id,))
+            if cursor.fetchone()[0] >= limit:
+                raise ValueError(f"FREE plan dozvoljava {limit} tim. Pređi na PRO za više timova.")
+        cursor.execute(
+            "INSERT INTO teams (name, owner_id) VALUES (%s, %s)", (name, user_id)
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+    finally:
+        cursor.close()
+        conn.close()
     return new_id
 
 
@@ -72,15 +96,31 @@ def add_player(team_id, name, position="", note=""):
     name = name.strip()
     if not name:
         raise ValueError("Unesi ime igrača.")
+
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO players (team_id, name, position, note) VALUES (%s, %s, %s, %s)",
-        (team_id, name, position.strip() or None, note.strip() or None),
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        cursor.execute(
+            "SELECT u.plan FROM teams t JOIN users u ON u.id = t.owner_id WHERE t.id = %s",
+            (team_id,),
+        )
+        row = cursor.fetchone()
+        plan = row[0] if row and row[0] in PLAN_LIMITS else "free"
+        limit = PLAN_LIMITS[plan]["players"]
+
+        if limit is not None:
+            cursor.execute("SELECT COUNT(*) FROM players WHERE team_id = %s", (team_id,))
+            if cursor.fetchone()[0] >= limit:
+                raise ValueError(f"FREE plan dozvoljava do {limit} igrača po timu. Pređi na PRO.")
+
+        cursor.execute(
+            "INSERT INTO players (team_id, name, position, note) VALUES (%s, %s, %s, %s)",
+            (team_id, name, position.strip() or None, note.strip() or None),
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def update_player(player_id, name, position="", note=""):

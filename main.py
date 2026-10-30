@@ -1,7 +1,7 @@
 import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import ttk, messagebox, simpledialog, filedialog
-#from login import ask_login
+from login import ask_login
 import os
 from PIL import Image, ImageTk, ImageOps
 
@@ -12,20 +12,23 @@ from Services import (
     get_attendance, save_attendance,  add_photo, list_photos, delete_photo,
     PHOTOS_DIR, upcoming_trainings,  attendance_stats, get_match_stats, save_match_stats,
     goal_totals, get_player_photo, set_player_photo, progress_stats,
-    send_message, list_messages, delete_message,
+    send_message, list_messages, delete_message, get_user_plan,
 )
 
 
 DATE_FMT = "%Y-%m-%d %H:%M"
 PROGRESS_WINDOW = 4
 
-#user = ask_login()
-#if user is None:
-   # raise SystemExit      # prozor za prijavu zatvoren bez prijave
-#user_id, user_name = user
+user = ask_login()
+if user is None:
+    raise SystemExit
+user_id, user_name = user
+
 user_id, user_name = 1, "Test"
+plan = get_user_plan(user_id)
+is_pro = (plan == "pro")
 root = tk.Tk()
-root.title(f"CoachTrack")
+root.title(f"CoachTrack – {user_name} ({plan.upper()})")
 root.geometry("900x520")
 
 teams = []   # timovi koji su trenutno na ekranu: [(id, naziv), ...]
@@ -407,6 +410,8 @@ def open_match_stats():
 
 
 def show_reminders():
+    if not is_pro:
+        return  # podsetnici su samo za PRO plan
     upcoming = upcoming_trainings(user_id, 24)
     if not upcoming:
         return
@@ -772,6 +777,10 @@ ttk.Button(message_input, text="Pošalji", command=send_new_message).pack(side="
 ttk.Button(message_input, text="Obriši", command=remove_message).pack(side="left", padx=(6, 0))
 
 # ---------- pokretanje ----------
+# FREE plan: PRO tabovi su zaključani
+if not is_pro:
+    for tab, name in ((photos_tab, "Slike"), (stats_tab, "Statistika"), (progress_tab, "Napredak")):
+        tabs.tab(tab, text=f"{name} (PRO)", state="disabled")
 
 refresh_teams()
 root.after(500, show_reminders)
