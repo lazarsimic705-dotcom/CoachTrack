@@ -73,7 +73,7 @@ def refresh_teams():
 
 
 def new_team():
-    name = simpledialog.askstring("Novi tim", "Naziv tima (npr. U17):")
+    name = simpledialog.askstring("Novi tim", "Naziv tima:")
     if name is None:
         return
     try:
@@ -89,7 +89,7 @@ def remove_team():
     if team_id is None:
         messagebox.showinfo("CoachTrack", "Izaberi tim iz liste.")
         return
-    if messagebox.askyesno("CoachTrack", "Obrisati tim sa svim igračima i treninzima?"):
+    if messagebox.askyesno("CoachTrack", "Obrisati tim sa svim igracima i treninzima?"):
         delete_team(user_id, team_id)
         refresh_teams()
 
@@ -113,7 +113,7 @@ def show_player_preview(event=None):
     player_id = selected_player_id()
     if player_id is None:
         player_preview_image = None
-        player_preview_label.config(image="", text="Izaberi igrača")
+        player_preview_label.config(image="", text="Izaberi igraca")
         return
     file_name = get_player_photo(player_id)
     if not file_name:
@@ -127,16 +127,16 @@ def show_player_preview(event=None):
         player_preview_label.config(image=player_preview_image, text="")
     except OSError:
         player_preview_image = None
-        player_preview_label.config(image="", text="Slika se ne može otvoriti.")
+        player_preview_label.config(image="", text="Slika se ne moze otvoriti.")
 
 
 def choose_player_photo():
     player_id = selected_player_id()
     if player_id is None:
-        messagebox.showinfo("CoachTrack", "Izaberi igrača iz liste.")
+        messagebox.showinfo("CoachTrack", "Izaberi igraca iz liste.")
         return
     path = filedialog.askopenfilename(
-        title="Izaberi sliku igrača",
+        title="Izaberi sliku igraca",
         filetypes=[("Slike", "*.png *.jpg *.jpeg *.gif")])
     if not path:
         return
@@ -152,11 +152,11 @@ def new_player():
     if team_id is None:
         messagebox.showinfo("CoachTrack", "Prvo izaberi ili napravi tim.")
         return
-    name = simpledialog.askstring("Novi igrač", "Ime:")
+    name = simpledialog.askstring("Novi igrac", "Ime:")
     if name is None:
         return
-    position = simpledialog.askstring("Novi igrač", "Pozicija:") or ""
-    note = simpledialog.askstring("Novi igrač", "Beleška (privatna):") or ""
+    position = simpledialog.askstring("Novi igrac", "Pozicija:") or ""
+    note = simpledialog.askstring("Novi igrac", "Beleska (privatna):") or ""
     try:
         add_player(team_id, name, position, note)
     except ValueError as e:
@@ -168,14 +168,14 @@ def new_player():
 def edit_player():
     player_id = selected_player_id()
     if player_id is None:
-        messagebox.showinfo("CoachTrack", "Izaberi igrača iz liste.")
+        messagebox.showinfo("CoachTrack", "Izaberi igraca iz liste.")
         return
     old_name, old_position, old_note = players_tree.item(str(player_id), "values")
     name = simpledialog.askstring("Izmena", "Ime:", initialvalue=old_name)
     if name is None:
         return
     position = simpledialog.askstring("Izmena", "Pozicija:", initialvalue=old_position) or ""
-    note = simpledialog.askstring("Izmena", "Beleška:", initialvalue=old_note) or ""
+    note = simpledialog.askstring("Izmena", "Beleska:", initialvalue=old_note) or ""
     try:
         update_player(player_id, name, position, note)
     except ValueError as e:
@@ -187,9 +187,9 @@ def edit_player():
 def remove_player():
     player_id = selected_player_id()
     if player_id is None:
-        messagebox.showinfo("CoachTrack", "Izaberi igrača iz liste.")
+        messagebox.showinfo("CoachTrack", "Izaberi igraca iz liste.")
         return
-    if messagebox.askyesno("CoachTrack", "Obrisati igrača?"):
+    if messagebox.askyesno("CoachTrack", "Obrisati igraca?"):
         delete_player(player_id)
         refresh_players()
 
@@ -352,11 +352,11 @@ def open_match_stats():
     win.transient(root)
     win.grab_set()
 
-    ttk.Label(win, text="Izaberi igrača, pa klikni dugme.").pack(anchor="w", padx=8, pady=(8, 0))
+    ttk.Label(win, text="Izaberi igraca, pa klikni dugme.").pack(anchor="w", padx=8, pady=(8, 0))
 
     tree = ttk.Treeview(win, columns=("name", "goals", "assists"),
                         show="headings", selectmode="browse")
-    tree.heading("name", text="Igrač")
+    tree.heading("name", text="Igrac")
     tree.heading("goals", text="Golovi")
     tree.heading("assists", text="Asistencije")
     tree.column("name", width=200)

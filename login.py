@@ -5,7 +5,6 @@ from Services import login, register
 
 
 def ask_login():
-    """Pokaže prozor za prijavu. Vraća (id, ime) ili None ako je zatvoren."""
     result = {}
 
     win = tk.Tk()
