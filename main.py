@@ -1,7 +1,9 @@
+import ttkbootstrap as tb
 import tkinter as tk
 from datetime import datetime, timedelta
-from tkinter import ttk, messagebox, simpledialog, filedialog
-from login import ask_login
+from tkinter import messagebox, simpledialog, filedialog
+import ttkbootstrap as ttk
+#from login import ask_login
 import os
 from PIL import Image, ImageTk, ImageOps
 
@@ -19,15 +21,19 @@ from Services import (
 DATE_FMT = "%Y-%m-%d %H:%M"
 PROGRESS_WINDOW = 4
 
-user = ask_login()
-if user is None:
-    raise SystemExit
-user_id, user_name = user
+#user = ask_login()
+#if user is None:
+    #raise SystemExit
+#user_id, user_name = user
 
 user_id, user_name = 1, "Test"
 plan = get_user_plan(user_id)
 is_pro = (plan == "pro")
-root = tk.Tk()
+root = tb.Window(themename="cosmo")
+style = tb.Style()
+style.configure("Treeview", rowheight=34, font=("Segoe UI", 10))
+style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"), padding=8)
+style.configure("TNotebook.Tab", padding=(18, 9), font=("Segoe UI", 10))
 root.title(f"CoachTrack – {user_name} ({plan.upper()})")
 root.geometry("900x520")
 
@@ -424,20 +430,59 @@ def show_reminders():
 
     messagebox.showinfo("Podsetnik", "Događaji u narednih 24 sata:\n\n" + "\n".join(lines))
 
+def make_avatar(parent, name):
+    """Krug sa prvim slovom imena."""
+    canvas = tk.Canvas(parent, width=30, height=30, highlightthickness=0, bg=style.colors.bg)
+    canvas.create_oval(1, 1, 29, 29, fill=style.colors.primary, outline="")
+    canvas.create_text(15, 15, text=name[:1].upper(), fill="white", font=("Segoe UI", 10, "bold"))
+    return canvas
+
+
 def refresh_stats():
-    stats_tree.delete(*stats_tree.get_children())
+    # obriši stare redove (sve osim zaglavlja u redu 0)
+    for widget in stats_grid.grid_slaves():
+        if int(widget.grid_info()["row"]) > 0:
+            widget.destroy()
+
     team_id = current_team_id()
     if team_id is None:
         return
-    rows = attendance_stats(team_id)
-    totals = goal_totals(team_id)
-    rows.sort(key=lambda r: (r[4] is None, -(r[4] or 0), r[1]))
-    for player_id, name, total, came, percent in rows:
-        shown = f"{percent}%" if percent is not None else "—"
-        goals, assists = totals.get(player_id, (0, 0))
-        stats_tree.insert("", "end", iid=str(player_id),
-                          values=(name, f"{came} / {total}", shown, goals, assists))
 
+    # trend po igraču (isti proračun kao u tabu Napredak)
+    trends = {}
+    for pid, name, pct_recent, pct_prev, c_recent, c_prev in progress_stats(team_id, PROGRESS_WINDOW):
+        trends[pid] = trend_of(pct_recent, pct_prev, c_recent, c_prev)
+
+    totals = goal_totals(team_id)
+    rows = attendance_stats(team_id)
+    rows.sort(key=lambda r: (r[4] is None, -(r[4] or 0), r[1]))
+
+    for i, (player_id, name, total, came, percent) in enumerate(rows, start=1):
+        # igrač: krug + ime
+        cell = ttk.Frame(stats_grid)
+        cell.grid(row=i, column=0, sticky="w", padx=6, pady=6)
+        make_avatar(cell, name).pack(side="left")
+        ttk.Label(cell, text=name, font=("Segoe UI", 11)).pack(side="left", padx=10)
+
+        ttk.Label(stats_grid, text=f"{came} / {total}").grid(row=i, column=1, padx=6)
+
+        # redovnost: traka + procenat
+        bar_cell = ttk.Frame(stats_grid)
+        bar_cell.grid(row=i, column=2, sticky="ew", padx=6)
+        ttk.Progressbar(bar_cell, value=percent or 0, maximum=100, bootstyle="primary").pack(
+            side="left", fill="x", expand=True)
+        ttk.Label(bar_cell, text=f"{percent}%" if percent is not None else "—", width=5,
+                  anchor="e").pack(side="left", padx=(8, 0))
+
+        goals, assists = totals.get(player_id, (0, 0))
+        ttk.Label(stats_grid, text=str(goals)).grid(row=i, column=3, padx=6)
+        ttk.Label(stats_grid, text=str(assists)).grid(row=i, column=4, padx=6)
+
+        # trend sa bojom
+        score, text = trends.get(player_id, (0, "—"))
+        color = "success" if score > 0 else "danger" if score < 0 else "secondary"
+        ttk.Label(stats_grid, text=text, bootstyle=color, font=("Segoe UI", 10, "bold")).grid(
+            row=i, column=5, sticky="w", padx=6)
 # ---------- Statistika igraca ----------
 
 def trend_of(pct_recent, pct_prev, c_recent, c_prev):
@@ -474,9 +519,10 @@ def refresh_progress():
     for score, name, player_id, pct_recent, pct_prev, c_recent, c_prev, text in rows:
         recent_text = f"{pct_recent}%" if pct_recent is not None else "—"
         prev_text = f"{pct_prev}%" if pct_prev is not None else "—"
+        tag = "up" if score > 0 else "down" if score < 0 else "same"
         progress_tree.insert("", "end", iid=str(player_id),
-                             values=(name, recent_text, prev_text, c_recent, c_prev, text))
-
+                             values=(name, recent_text, prev_text, c_recent, c_prev, text),
+                             tags=(tag,))
 
 def on_tab_changed(event=None):
     refresh_stats()
@@ -612,12 +658,14 @@ def remove_photo():
 left = ttk.LabelFrame(root, text="Timovi")
 left.pack(side="left", fill="y", padx=10, pady=10)
 
-team_list = tk.Listbox(left, width=22, exportselection=False)
+team_list = tk.Listbox(left, width=22, exportselection=False,
+                       font=("Segoe UI", 11), borderwidth=0, highlightthickness=0,
+                       activestyle="none", selectbackground="#e3edff",
+                       selectforeground="#1f2933", background="white")
 team_list.pack(padx=6, pady=6, fill="y", expand=True)
 team_list.bind("<<ListboxSelect>>", lambda event: refresh_team_data())
-ttk.Button(left, text="Novi tim", command=new_team).pack(fill="x", padx=6, pady=2)
-ttk.Button(left, text="Obriši tim", command=remove_team).pack(fill="x", padx=6, pady=(2, 6))
-
+ttk.Button(left, text="Novi tim", command=new_team, bootstyle="primary").pack(fill="x", padx=6, pady=2)
+ttk.Button(left, text="Obriši tim", command=remove_team, bootstyle="secondary-outline").pack(fill="x", padx=6, pady=(2, 6))
 # ---------- izgled: desno tabovi ----------
 
 tabs = ttk.Notebook(root)
@@ -709,22 +757,39 @@ ttk.Button(photo_buttons, text="Obrisi", command=remove_photo).pack(side="left",
 stats_tab = ttk.Frame(tabs)
 tabs.add(stats_tab, text="Statistika")
 
-stats_tree = ttk.Treeview(stats_tab, columns=("name", "came", "percent", "goals", "assists"),
-                          show="headings", selectmode="browse")
-stats_tree.heading("name", text="Igrač")
-stats_tree.heading("came", text="Bio na treningu")
-stats_tree.heading("percent", text="Redovnost")
-stats_tree.heading("goals", text="Golovi")
-stats_tree.heading("assists", text="Asistencije")
-stats_tree.column("name", width=160)
-stats_tree.column("came", width=110, anchor="center")
-stats_tree.column("percent", width=90, anchor="center")
-stats_tree.column("goals", width=70, anchor="center")
-stats_tree.column("assists", width=90, anchor="center")
-stats_tree.pack(fill="both", expand=True, padx=6, pady=6)
+# platno sa klizačem, a unutra mreza sa redovima
+stats_canvas = tk.Canvas(stats_tab, highlightthickness=0, bg=style.colors.bg)
+stats_scroll = ttk.Scrollbar(stats_tab, orient="vertical", command=stats_canvas.yview)
+stats_canvas.configure(yscrollcommand=stats_scroll.set)
+stats_scroll.pack(side="right", fill="y")
+stats_canvas.pack(side="left", fill="both", expand=True)
+
+stats_grid = ttk.Frame(stats_canvas, padding=10)
+stats_window = stats_canvas.create_window((0, 0), window=stats_grid, anchor="nw")
+
+# oblast klizanja prati veličinu sadržaja, a mreža se razvuče do širine prozora
+stats_grid.bind("<Configure>",
+                lambda e: stats_canvas.configure(scrollregion=stats_canvas.bbox("all")))
+stats_canvas.bind("<Configure>",
+                  lambda e: stats_canvas.itemconfigure(stats_window, width=e.width))
 
 
-tabs.bind("<<NotebookTabChanged>>", on_tab_changed)
+def stats_wheel(event):
+    stats_canvas.yview_scroll(int(-event.delta / 120), "units")
+
+
+# točkić miša radi samo dok je pokazivač iznad statistike
+stats_canvas.bind("<Enter>", lambda e: stats_canvas.bind_all("<MouseWheel>", stats_wheel))
+stats_canvas.bind("<Leave>", lambda e: stats_canvas.unbind_all("<MouseWheel>"))
+
+for col, (title, minsize, weight) in enumerate([
+        ("IGRAČ", 190, 0), ("TRENINZI", 90, 0), ("REDOVNOST", 230, 1),
+        ("GOLOVI", 70, 0), ("ASISTENCIJE", 100, 0), ("TREND", 150, 0)]):
+    stats_grid.grid_columnconfigure(col, minsize=minsize, weight=weight)
+    ttk.Label(stats_grid, text=title, font=("Segoe UI", 8, "bold"), bootstyle="secondary").grid(
+        row=0, column=col, sticky="w", padx=6, pady=(0, 8))
+
+style.configure("primary.Horizontal.TProgressbar", thickness=8)
 
 
 # --- tab Napredak ---
@@ -747,6 +812,9 @@ progress_tree.column("c_recent", width=80, anchor="center")
 progress_tree.column("c_previous", width=80, anchor="center")
 progress_tree.column("trend", width=160)
 progress_tree.pack(fill="both", expand=True, padx=6, pady=6)
+progress_tree.tag_configure("up", foreground="#16a34a")
+progress_tree.tag_configure("down", foreground="#dc2626")
+progress_tree.tag_configure("same", foreground="#6b7785")
 
 ttk.Label(progress_tab,
           text=f"Poredi poslednjih {PROGRESS_WINDOW} dogadjaja sa {PROGRESS_WINDOW} pre njih. G+A = golovi + asistencije.").pack(pady=(0, 6))
